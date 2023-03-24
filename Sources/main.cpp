@@ -233,6 +233,6 @@ void SetProgram(){
         float r = double(x) / (WIDTH);
         float g = double(y) / (HEIGHT);
         float b = 0.25f;
-        return Px{r * 256, g * 256, b * 256};
+        return Px{(unsigned char)(r * 256), (unsigned char)(g * 256), (unsigned char)(b * 256)};
     };
 }

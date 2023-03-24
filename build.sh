@@ -1,6 +1,6 @@
 #!/bin/bash
 
-cc=gcc
+cc=g++
 std=-std=c++17
 opt=-O2
 inc=-I.
