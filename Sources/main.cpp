@@ -7,8 +7,8 @@
 #include <thread>
 #include <complex>
 #include <complex.h>
-
-#define SIZE 512
+#include <vector>
+#define SIZE 1024
 #define WIDTH SIZE
 #define HEIGHT SIZE
 
@@ -35,6 +35,12 @@ public:
     {
         if(x < 0 || y < 0 || x >= WIDTH || y >= HEIGHT) return;
         buf[y * WIDTH + x] = this->_curColor;
+    }
+
+    void drawPixel(Px* buf, int x, int y, Px color)
+    {
+        if(x < 0 || y < 0 || x >= WIDTH || y >= HEIGHT) return;
+        buf[y * WIDTH + x] = color;
     }
 
     void setColor(int r, int g, int b, int a){
@@ -84,12 +90,56 @@ public:
         }
     }
 
+    void drawLine(Px* buf, int x0, int y0, int x1, int y1, Px color)
+    {
+        const int dx = ABS(x1 - x0);
+        const int dy = -ABS(y1 - y0);
+        const int sx = x0 < x1 ? 1 : -1;
+        const int sy = y0 < y1 ? 1 : -1;
+
+        int error = dx + dy;
+
+        while (1) {
+            drawPixel(buf, x0, y0, color);
+            if (x0 == x1 && y0 == y1) {
+                break;
+            }
+
+            int e2 = error * 2;
+            if (e2 >= dy) {
+                if (x0 == x1) {
+                    break;
+                }
+
+                error = error + dy;
+                x0 = x0 + sx;
+            }
+
+            if (e2 <= dx) {
+                if (y0 == y1) {
+                    break;
+                }
+
+                error = error + dx;
+                y0 = y0 + sy;
+            }
+        }
+    }
+
     void drawRect(int x0, int y0, int x1, int y1)
     {
         drawLine(x0, y0, x1, y0);
         drawLine(x0, y1, x1, y1);
         drawLine(x1, y0, x1, y1);
         drawLine(x0, y0, x0, y1);
+    }
+
+    void drawRect(Px* buf, int x0, int y0, int x1, int y1, Px color)
+    {
+        drawLine(buf, x0, y0, x1, y0, color);
+        drawLine(buf, x0, y1, x1, y1, color);
+        drawLine(buf, x1, y0, x1, y1, color);
+        drawLine(buf, x0, y0, x0, y1, color);
     }
 
     void setBuffer(Px* buf){
@@ -104,6 +154,7 @@ struct Rectangle{
 class RenderWorker{
 public:
     static std::function<Px(int, int)> Program;
+    static Px* outlineBuffer;
     PXE* pxe;
     Rectangle _workArea;
 
@@ -113,7 +164,8 @@ private:
     bool _finished;
 
 public:
-    RenderWorker(PXE* pxe, int x, int y, int width, int height){
+
+    void Init(PXE* pxe, int x, int y, int width, int height){
         this->pxe = pxe;
         _workArea = Rectangle{x,y,width,height};
         _numPixelsCovered = width * height;
@@ -129,8 +181,8 @@ public:
     }
 
     void DrawOutline(){
-        pxe->setColor(255,255,0);
-        pxe->drawRect(_workArea.x - 1, _workArea.y - 1, _workArea.x + _workArea.width, _workArea.y + _workArea.height);
+        float progress = float(_currentPixel) / _numPixelsCovered;
+        pxe->drawRect(RenderWorker::outlineBuffer, _workArea.x, _workArea.y, _workArea.x + _workArea.width - 1, _workArea.y + _workArea.height - 1, Px{0,(unsigned char)(progress * 255.0f),(unsigned char)(progress * 255.0f), 255});
     }
 
     bool IsFinished(){
@@ -159,6 +211,7 @@ public:
 };
 
 std::function<Px(int,int)> RenderWorker::Program;
+Px* RenderWorker::outlineBuffer;
 
 struct Tile{
     int x, y;
@@ -179,7 +232,8 @@ public:
     {
         _numWorkers = std::thread::hardware_concurrency();
         _threads = new std::thread[_numWorkers];
-
+        _workers = new RenderWorker[_numWorkers];
+        _tileQueue = std::vector<Tile>();
         //fill tileQueue
         _renderWorkerSize = renderWorkerSize;
         _renderWorkerXTiles = WIDTH / renderWorkerSize;
@@ -196,7 +250,7 @@ public:
             Tile t = _tileQueue.at(idx);
             _tileQueue.erase(_tileQueue.begin() + idx);
             //std::cout << "Dispatching at: " << t.x << ", " << t.y << std::endl;
-            _workers[i] = RenderWorker(pxe, t.x * _renderWorkerSize, t.y * _renderWorkerSize, _renderWorkerSize, _renderWorkerSize);
+            _workers[i].Init(pxe, t.x * _renderWorkerSize, t.y * _renderWorkerSize, _renderWorkerSize, _renderWorkerSize);
             _threads[i] = std::thread(&RenderWorker::Work, &_workers[i]);
         }
 
@@ -213,22 +267,25 @@ public:
                     int idx = rand() % _tileQueue.size();
                     Tile t = _tileQueue.at(idx);
                     _tileQueue.erase(_tileQueue.begin() + idx);
-                    //std::cout << "Dispatching at: " << t.x << ", " << t.y << std::endl;
+                    std::cout << "Dispatching at: " << t.x << ", " << t.y << std::endl;
                     _workers[i].Reset( t.x * _renderWorkerSize, t.y * _renderWorkerSize);
                     _threads[i] = std::thread(&RenderWorker::Work, &_workers[i]);
                     _threads[i].detach();
                 }
+            }else{
+                _workers[i].DrawOutline();
             }
         }
     }
 
-    void SendIt(){
-        while(!_tileQueue.empty()){
-            Update();
-        }
+    // void SendIt(){
+    //     std::cout << "Sending it" << std::endl;
+    //     while(!_tileQueue.empty()){
+    //         Update();
+    //     }
 
-        std::cout << "Render Complete!" << std::endl;
-    }
+    //     std::cout << "Render Complete!" << std::endl;
+    // }
 
     ~Dispatcher()
     {
@@ -250,6 +307,8 @@ int main(void)
 
     Px* pixbuf = spxeStart("RayTracer", 1024, 1024, WIDTH, HEIGHT);
 
+    RenderWorker::outlineBuffer = pixbuf;
+
     //Px* imgBuf = (Px*)malloc(WIDTH * HEIGHT * sizeof(Px));
     Px* imgBuf = new Px[WIDTH * HEIGHT]{};
 
@@ -264,7 +323,7 @@ int main(void)
     bool usethread = true;
 
     //if(usethread)
-    std::thread dispatchThread = std::thread(&Dispatcher::SendIt, &d);
+    //std::thread dispatchThread = std::thread(&Dispatcher::SendIt, &d);
 
     while (spxeRun(pixbuf)) {
         if (spxeKeyPressed(ESCAPE)) {
@@ -274,7 +333,9 @@ int main(void)
 
 
         paintBuffer(imgBuf, pixbuf);
-        if(!usethread) d.Update();
+
+        d.Update();
+       
     }
 
     delete[] imgBuf;
@@ -337,7 +398,7 @@ const double MIN_X = x - zoom / 2;
 const double MAX_X = x + zoom / 2;
 const double MIN_Y = y - zoom / 2.0 / ((double)WIDTH / (double)HEIGHT);
 const double MAX_Y = y + zoom / 2.0 / ((double)WIDTH / (double)HEIGHT);
-const int MAX_ITERATIONS = 1000000;
+const int MAX_ITERATIONS = 500000;
 
 int mandelbrot(double x0, double y0) {
     std::complex<double> z0(x0, y0);
@@ -364,6 +425,7 @@ void SetProgram(){
         int col = mandelbrot(x0, y0);
         Color c = mapColor(col, MAX_ITERATIONS);
         return Px{static_cast<unsigned char>(c.r),static_cast<unsigned char>(c.g),static_cast<unsigned char>(c.b)};
+        //return Px{255,255,255,255};
     };
 }
 
