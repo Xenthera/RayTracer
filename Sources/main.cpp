@@ -5,7 +5,7 @@
 #include <functional>
 #include <cmath>
 #include <thread>
-#define SIZE 256
+#define SIZE 512
 #define WIDTH SIZE
 #define HEIGHT SIZE
 
@@ -137,7 +137,7 @@ public:
     void Work(){
         //int sleepTime = rand()%4 + 2;
         while(!_finished){
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            //std::this_thread::sleep_for(std::chrono::milliseconds(1));
             if(_currentPixel < _numPixelsCovered){
                 int localX = _currentPixel % _workArea.width;
                 int localY = _currentPixel / _workArea.width;
@@ -174,7 +174,7 @@ private:
 public:
     Dispatcher(PXE* pxe, int renderWorkerSize)
     {
-        _numWorkers = 2;//std::thread::hardware_concurrency();
+        _numWorkers = std::thread::hardware_concurrency();
         _threads = new std::thread[_numWorkers];
 
         //fill tileQueue
@@ -219,6 +219,14 @@ public:
         }
     }
 
+    void SendIt(){
+        while(!_tileQueue.empty()){
+            Update();
+        }
+
+        std::cout << "Render Complete!" << std::endl;
+    }
+
     ~Dispatcher()
     {
         delete[] _workers;
@@ -237,21 +245,23 @@ int main(void)
     SetProgram();
     srand(time(nullptr));
 
-    Px* pixbuf = spxeStart("spxe", 1024, 1024, WIDTH, HEIGHT);
+    Px* pixbuf = spxeStart("RayTracer", 1024, 1024, WIDTH, HEIGHT);
 
     //Px* imgBuf = (Px*)malloc(WIDTH * HEIGHT * sizeof(Px));
     Px* imgBuf = new Px[WIDTH * HEIGHT]{};
 
     PXE pxe(imgBuf);
 
-    Dispatcher d{&pxe, 16};
+    Dispatcher d{&pxe, 32};
 
 
 
     bool renderComplete = false;
 
+    bool usethread = true;
 
-
+    //if(usethread)
+    std::thread dispatchThread = std::thread(&Dispatcher::SendIt, &d);
 
     while (spxeRun(pixbuf)) {
         if (spxeKeyPressed(ESCAPE)) {
@@ -261,34 +271,7 @@ int main(void)
 
 
         paintBuffer(imgBuf, pixbuf);
-
-        d.Update();
-
-        //pxe.setBuffer(pixbuf);
-        //rw.DrawOutline();
-
-
-//        if(rw.IsFinished()){
-//            if(rwX < rwXJobs - 1){
-//                rwX++;
-//            }else{
-//                rwX = 0;
-//                rwY--;
-//                if(rwY < 0){
-//                    renderComplete = true;
-//                    std::cout << "Render Complete" << std::endl;
-//                    glfwSwapInterval(1);
-//
-//                }
-//            }
-//            rw.Reset(rwX * rwWidth, rwY * rwHeight);
-//            std::cout << "Worker complete" << std::endl;
-//
-//            if(!renderComplete){
-//                if(!t.joinable())
-//                t = std::thread(&RenderWorker::Work, &rw);
-//            }
-//        }
+        if(!usethread) d.Update();
     }
 
     delete[] imgBuf;
@@ -304,6 +287,6 @@ void SetProgram(){
         float dist = sqrt((diffX * diffX) + (diffY * diffY));
 //        Px col = dist < 30 ? Px{255,static_cast<unsigned char>(dist * 8),static_cast<unsigned char>(dist * 4)} : Px{0,static_cast<unsigned char>(y),static_cast<unsigned char>(x)};
 //        return col;
-         return dist < 30 ? Px{255,static_cast<unsigned char>(dist * 8),static_cast<unsigned char>(dist * 4)} : Px{static_cast<unsigned char>(rand()%256),static_cast<unsigned char>(rand()%256),static_cast<unsigned char>(rand()%256)};
+         return dist < 30 ? Px{255,static_cast<unsigned char>(dist * 8),static_cast<unsigned char>(dist * 4)} : Px{static_cast<unsigned char>(rand()%256),static_cast<unsigned char>(rand()%256),0};
     };
 }
