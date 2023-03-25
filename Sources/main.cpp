@@ -105,7 +105,7 @@ public:
 
     void DrawOutline(){
         float progress = float(_currentPixel) / _numPixelsCovered;
-        pxe->drawRect(RenderWorker::outlineBuffer, _workArea.x, _workArea.y, _workArea.x + _workArea.width - 1, _workArea.y + _workArea.height - 1, Px{0,(unsigned char)(progress * 255.0f),(unsigned char)(progress * 255.0f), 255});
+        pxe->drawRect(RenderWorker::outlineBuffer, _workArea.x, _workArea.y, _workArea.x + _workArea.width - 1, _workArea.y + _workArea.height - 1, Px{(unsigned char)(progress * 255.0f),(unsigned char)(progress * 255.0f),static_cast<unsigned char>(255 - (progress * 255)), 255});
     }
 
     bool IsFinished(){
@@ -115,7 +115,7 @@ public:
     void Work(){
         //int sleepTime = rand()%4 + 2;
         while(!_finished){
-            //std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            //std::this_thread::sleep_for(std::chrono::microseconds (500));
             if(_currentPixel < _numPixelsCovered){
                 int localX = _currentPixel % _workArea.width;
                 int localY = _currentPixel / _workArea.width;
@@ -215,6 +215,97 @@ void paintBuffer(Px* src, Px* target){
 
 void SetProgram();
 
+class vec3 {
+public:
+    vec3() : e{0,0,0} {}
+    vec3(double e0, double e1, double e2) : e{e0, e1, e2} {}
+
+    double x() const { return e[0]; }
+    double y() const { return e[1]; }
+    double z() const { return e[2]; }
+
+    vec3 operator-() const { return vec3(-e[0], -e[1], -e[2]); }
+    double operator[](int i) const { return e[i]; }
+    double& operator[](int i) { return e[i]; }
+
+    vec3& operator+=(const vec3 &v) {
+        e[0] += v.e[0];
+        e[1] += v.e[1];
+        e[2] += v.e[2];
+        return *this;
+    }
+
+    vec3& operator*=(const double t) {
+        e[0] *= t;
+        e[1] *= t;
+        e[2] *= t;
+        return *this;
+    }
+
+    vec3& operator/=(const double t) {
+        return *this *= 1/t;
+    }
+
+    double length() const {
+        return std::sqrt(length_squared());
+    }
+
+    double length_squared() const {
+        return e[0]*e[0] + e[1]*e[1] + e[2]*e[2];
+    }
+
+public:
+    double e[3];
+};
+
+// Type aliases for vec3
+using point3 = vec3;   // 3D point
+using color = vec3;    // RGB color
+
+ std::ostream& operator<<(std::ostream &out, const vec3 &v) {
+    return out << v.e[0] << ' ' << v.e[1] << ' ' << v.e[2];
+}
+
+ vec3 operator+(const vec3 &u, const vec3 &v) {
+    return vec3(u.e[0] + v.e[0], u.e[1] + v.e[1], u.e[2] + v.e[2]);
+}
+
+ vec3 operator-(const vec3 &u, const vec3 &v) {
+    return vec3(u.e[0] - v.e[0], u.e[1] - v.e[1], u.e[2] - v.e[2]);
+}
+
+ vec3 operator*(const vec3 &u, const vec3 &v) {
+    return vec3(u.e[0] * v.e[0], u.e[1] * v.e[1], u.e[2] * v.e[2]);
+}
+
+ vec3 operator*(double t, const vec3 &v) {
+    return vec3(t*v.e[0], t*v.e[1], t*v.e[2]);
+}
+
+ vec3 operator*(const vec3 &v, double t) {
+    return t * v;
+}
+
+ vec3 operator/(vec3 v, double t) {
+    return (1/t) * v;
+}
+
+ double dot(const vec3 &u, const vec3 &v) {
+    return u.e[0] * v.e[0]
+           + u.e[1] * v.e[1]
+           + u.e[2] * v.e[2];
+}
+
+ vec3 cross(const vec3 &u, const vec3 &v) {
+    return vec3(u.e[1] * v.e[2] - u.e[2] * v.e[1],
+                u.e[2] * v.e[0] - u.e[0] * v.e[2],
+                u.e[0] * v.e[1] - u.e[1] * v.e[0]);
+}
+
+ vec3 unit_vector(vec3 v) {
+    return v / v.length();
+}
+
 int main(void)
 {
     SetProgram();
@@ -228,7 +319,7 @@ int main(void)
 
     PXE pxe;
 
-    Dispatcher d{&pxe, 128};
+    Dispatcher d{&pxe, 32};
 
 
 
@@ -255,20 +346,72 @@ int main(void)
     return spxeEnd(pixbuf);
 }
 
+class ray {
+public:
+    ray() {}
+    ray(const point3& origin, const vec3& direction)
+            : orig(origin), dir(direction)
+    {}
+
+    point3 origin() const  { return orig; }
+    vec3 direction() const { return dir; }
+
+    point3 at(double t) const {
+        return orig + t*dir;
+    }
+
+public:
+    point3 orig;
+    vec3 dir;
+};
 
 
+
+double hit_sphere(const point3& center, double radius, const ray& r) {
+    vec3 oc = r.origin() - center;
+    auto a = r.direction().length_squared();
+    auto half_b = dot(oc, r.direction());
+    auto c = oc.length_squared() - radius*radius;
+    auto discriminant = half_b*half_b - a*c;
+
+    if (discriminant < 0) {
+        return -1.0;
+    } else {
+        return (-half_b - sqrt(discriminant) ) / a;
+    }
+}
+
+
+color ray_color(const ray& r) {
+    auto t = hit_sphere(point3(0,0,-1), 0.5, r);
+    if (t > 0.0) {
+        vec3 N = unit_vector(r.at(t) - vec3(0,0,-1));
+        return 0.5*color(N.x()+1, N.y()+1, N.z()+1);
+    }
+    vec3 unit_direction = unit_vector(r.direction());
+    t = 0.5*(unit_direction.y() + 1.0);
+    return (1.0-t)*color(1.0, 1.0, 1.0) + t*color(0.5, 0.7, 1.0);
+}
 
 void SetProgram(){
-    RenderWorker::Program = [](int x, int y) -> Px{
-       int centerX = WIDTH / 2;
-       int centerY = HEIGHT / 2;
-       float diffX = centerX - x;
-       float diffY = centerY - y;
-       float dist = sqrt((diffX * diffX) + (diffY * diffY));
-       Px col = dist < 30 ? Px{255,static_cast<unsigned char>(dist * 8),static_cast<unsigned char>(dist * 4)} : Px{0,static_cast<unsigned char>(y),static_cast<unsigned char>(x)};
-       return col;
-        return dist < 30 ? Px{255,static_cast<unsigned char>(dist * 8),static_cast<unsigned char>(dist * 4)} : Px{static_cast<unsigned char>(rand()%256),static_cast<unsigned char>(rand()%256),0};
+    const auto aspect_ratio = 1;
 
+    auto viewport_height = 2.0;
+    auto viewport_width = aspect_ratio * viewport_height;
+    auto focal_length = 1.0;
+
+    auto origin = point3(0, 0, 0);
+    auto horizontal = vec3(viewport_width, 0, 0);
+    auto vertical = vec3(0, viewport_height, 0);
+    auto lower_left_corner = origin - horizontal/2 - vertical/2 - vec3(0, 0, focal_length);
+
+    RenderWorker::Program = [origin, lower_left_corner, horizontal, vertical](int x, int y) -> Px{
+        auto u = double(x) / (WIDTH-1);
+        auto v = double(y) / (HEIGHT-1);
+        ray r(origin, lower_left_corner + u*horizontal + v*vertical - origin);
+        color pixel_color = ray_color(r);
+        Px col = Px{static_cast<unsigned char>(pixel_color.x() * 255), static_cast<unsigned char>(pixel_color.y() * 255), static_cast<unsigned char>(pixel_color.z() * 255)};
+        return col;
     };
 }
 
