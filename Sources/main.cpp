@@ -5,6 +5,9 @@
 #include <functional>
 #include <cmath>
 #include <thread>
+#include <complex>
+#include <complex.h>
+
 #define SIZE 512
 #define WIDTH SIZE
 #define HEIGHT SIZE
@@ -278,15 +281,90 @@ int main(void)
     return spxeEnd(pixbuf);
 }
 
+struct Color {
+    int r;
+    int g;
+    int b;
+    Color(int r, int g, int b) : r(r), g(g), b(b) {}
+};
+
+Color mapColor(int n, int maxIter) {
+    if (n == maxIter) {
+        // If the point is in the Mandelbrot set, assign it black
+        return Color(0, 0, 0);
+    } else {
+        // Map n to a hue value between 0 and 1
+        double hue = (double)n / (double)maxIter;
+        // Convert the hue to an RGB color using the HSV color space
+        double h = hue * 6.0;
+        double f = h - std::floor(h);
+        double p = 255.0 * (1.0 - 0.0);
+        double q = 255.0 * (1.0 - (f * 1.0));
+        double t = 255.0 * (1.0 - (1.0 - f) * 1.0);
+        int r, g, b;
+        if (h < 1.0) {
+            r = 255;
+            g = t;
+            b = 0;
+        } else if (h < 2.0) {
+            r = q;
+            g = 255;
+            b = 0;
+        } else if (h < 3.0) {
+            r = 0;
+            g = 255;
+            b = t;
+        } else if (h < 4.0) {
+            r = 0;
+            g = q;
+            b = 255;
+        } else if (h < 5.0) {
+            r = t;
+            g = 0;
+            b = 255;
+        } else {
+            r = 255;
+            g = 0;
+            b = q;
+        }
+        return Color(r, g, b);
+    }
+}
+double zoom = 0.0001;
+double x = -0.8;
+double y = -0.15;
+const double MIN_X = x - zoom / 2;
+const double MAX_X = x + zoom / 2;
+const double MIN_Y = y - zoom / 2.0 / ((double)WIDTH / (double)HEIGHT);
+const double MAX_Y = y + zoom / 2.0 / ((double)WIDTH / (double)HEIGHT);
+const int MAX_ITERATIONS = 1000000;
+
+int mandelbrot(double x0, double y0) {
+    std::complex<double> z0(x0, y0);
+    std::complex<double> z = z0;
+    int n = 0;
+    while (abs(z) <= 2.0 && n < MAX_ITERATIONS) {
+        z = z * z + z0;
+        n++;
+    }
+    return n;
+}
 void SetProgram(){
     RenderWorker::Program = [](int x, int y) -> Px{
-        int centerX = WIDTH / 2;
-        int centerY = HEIGHT / 2;
-        float diffX = centerX - x;
-        float diffY = centerY - y;
-        float dist = sqrt((diffX * diffX) + (diffY * diffY));
-//        Px col = dist < 30 ? Px{255,static_cast<unsigned char>(dist * 8),static_cast<unsigned char>(dist * 4)} : Px{0,static_cast<unsigned char>(y),static_cast<unsigned char>(x)};
-//        return col;
-         return dist < 30 ? Px{255,static_cast<unsigned char>(dist * 8),static_cast<unsigned char>(dist * 4)} : Px{static_cast<unsigned char>(rand()%256),static_cast<unsigned char>(rand()%256),0};
+//        int centerX = WIDTH / 2;
+//        int centerY = HEIGHT / 2;
+//        float diffX = centerX - x;
+//        float diffY = centerY - y;
+//        float dist = sqrt((diffX * diffX) + (diffY * diffY));
+////        Px col = dist < 30 ? Px{255,static_cast<unsigned char>(dist * 8),static_cast<unsigned char>(dist * 4)} : Px{0,static_cast<unsigned char>(y),static_cast<unsigned char>(x)};
+////        return col;
+//         return dist < 30 ? Px{255,static_cast<unsigned char>(dist * 8),static_cast<unsigned char>(dist * 4)} : Px{static_cast<unsigned char>(rand()%256),static_cast<unsigned char>(rand()%256),0};
+        double x0 = MIN_X + x * (MAX_X - MIN_X) / WIDTH;
+        double y0 = MIN_Y + y * (MAX_Y - MIN_Y) / HEIGHT;
+        int col = mandelbrot(x0, y0);
+        Color c = mapColor(col, MAX_ITERATIONS);
+        return Px{static_cast<unsigned char>(c.r),static_cast<unsigned char>(c.g),static_cast<unsigned char>(c.b)};
     };
 }
+
+
