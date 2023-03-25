@@ -4,6 +4,7 @@
 #include <iostream>
 #include <functional>
 #include <cmath>
+#include <thread>
 #define SIZE 256
 #define WIDTH SIZE
 #define HEIGHT SIZE
@@ -50,9 +51,9 @@ public:
         const int dy = -ABS(y1 - y0);
         const int sx = x0 < x1 ? 1 : -1;
         const int sy = y0 < y1 ? 1 : -1;
-        
+
         int error = dx + dy;
-        
+
         while (1) {
             drawPixel(x0, y0);
             if (x0 == x1 && y0 == y1) {
@@ -134,21 +135,96 @@ public:
     }
 
     void Work(){
-        if(_currentPixel < _numPixelsCovered){
-            int localX = _currentPixel % _workArea.width;
-            int localY = _currentPixel / _workArea.width;
-            Px col = RenderWorker::Program(_workArea.x + localX, _workArea.y + localY);
-            pxe->setColor(col.r, col.g, col.b);
-            pxe->drawPixel(_workArea.x + localX, _workArea.y + localY);
-
-            _currentPixel++;
-        }else{
-            _finished = true;
+        //int sleepTime = rand()%4 + 2;
+        while(!_finished){
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            if(_currentPixel < _numPixelsCovered){
+                int localX = _currentPixel % _workArea.width;
+                int localY = _currentPixel / _workArea.width;
+                Px col = RenderWorker::Program(_workArea.x + localX, _workArea.y + localY);
+                pxe->setColor(col.r, col.g, col.b);
+                pxe->drawPixel(_workArea.x + localX, _workArea.y + localY);
+//                std::cout << "Drawing pixel" << _currentPixel << std::endl;
+                _currentPixel++;
+            }else{
+                _finished = true;
+            }
         }
+
+
     }
 };
 
 std::function<Px(int,int)> RenderWorker::Program;
+
+struct Tile{
+    int x, y;
+};
+
+class Dispatcher{
+private:
+    unsigned int _numWorkers;
+    std::thread* _threads;
+    RenderWorker* _workers;
+    std::vector<Tile> _tileQueue;
+
+    int _renderWorkerSize;
+    int _renderWorkerXTiles, _renderWorkerYTiles;
+
+public:
+    Dispatcher(PXE* pxe, int renderWorkerSize)
+    {
+        _numWorkers = 2;//std::thread::hardware_concurrency();
+        _threads = new std::thread[_numWorkers];
+
+        //fill tileQueue
+        _renderWorkerSize = renderWorkerSize;
+        _renderWorkerXTiles = WIDTH / renderWorkerSize;
+        _renderWorkerYTiles = HEIGHT / renderWorkerSize;
+        int totalTiles = _renderWorkerXTiles * _renderWorkerYTiles;
+        for (int i = 0; i < _renderWorkerXTiles; ++i) {
+            for (int j = 0; j < _renderWorkerYTiles; ++j) {
+                _tileQueue.push_back(Tile{j, i});
+            }
+        }
+
+        for (int i = 0; i < _numWorkers; ++i) {
+            int idx = rand() % _tileQueue.size();
+            Tile t = _tileQueue.at(idx);
+            _tileQueue.erase(_tileQueue.begin() + idx);
+            //std::cout << "Dispatching at: " << t.x << ", " << t.y << std::endl;
+            _workers[i] = RenderWorker(pxe, t.x * _renderWorkerSize, t.y * _renderWorkerSize, _renderWorkerSize, _renderWorkerSize);
+            _threads[i] = std::thread(&RenderWorker::Work, &_workers[i]);
+        }
+
+        for (int i = 0; i < _numWorkers; ++i) {
+            _threads[i].detach();
+        }
+    }
+    //poll each thread's worker, if it's done reschedule a new worker
+    void Update()
+    {
+        for (int i = 0; i < _numWorkers; ++i) {
+            if(_workers[i].IsFinished()) {
+                if(!_tileQueue.empty()){
+                    int idx = rand() % _tileQueue.size();
+                    Tile t = _tileQueue.at(idx);
+                    _tileQueue.erase(_tileQueue.begin() + idx);
+                    //std::cout << "Dispatching at: " << t.x << ", " << t.y << std::endl;
+                    _workers[i].Reset( t.x * _renderWorkerSize, t.y * _renderWorkerSize);
+                    _threads[i] = std::thread(&RenderWorker::Work, &_workers[i]);
+                    _threads[i].detach();
+                }
+            }
+        }
+    }
+
+    ~Dispatcher()
+    {
+        delete[] _workers;
+        delete[] _threads;
+    }
+};
 
 void paintBuffer(Px* src, Px* target){
     memcpy(target, src, sizeof(Px) * WIDTH * HEIGHT);
@@ -161,28 +237,20 @@ int main(void)
     SetProgram();
     srand(time(nullptr));
 
-    Px* pixbuf = spxeStart("spxe", 512, 512, WIDTH, HEIGHT);
+    Px* pixbuf = spxeStart("spxe", 1024, 1024, WIDTH, HEIGHT);
 
     //Px* imgBuf = (Px*)malloc(WIDTH * HEIGHT * sizeof(Px));
     Px* imgBuf = new Px[WIDTH * HEIGHT]{};
 
     PXE pxe(imgBuf);
 
-    
+    Dispatcher d{&pxe, 16};
 
 
-    int rwWidth = 16;
-    int rwHeight = 16;
-
-    int rwXJobs = WIDTH / rwHeight;
-    int rwYJobs = HEIGHT / rwHeight;
-
-    int rwX = 0;
-    int rwY = rwYJobs - 1;
-
-    RenderWorker rw = RenderWorker(&pxe, rwX * rwWidth, rwY * rwHeight, rwWidth,rwHeight);
 
     bool renderComplete = false;
+
+
 
 
     while (spxeRun(pixbuf)) {
@@ -191,29 +259,36 @@ int main(void)
         }
         pxe.setBuffer(imgBuf);
 
-        if(!renderComplete)
-            rw.Work();
 
         paintBuffer(imgBuf, pixbuf);
-        pxe.setBuffer(pixbuf);
-        rw.DrawOutline();
-        
 
-        if(rw.IsFinished()){
-            if(rwX < rwXJobs - 1){
-                rwX++;
-            }else{
-                rwX = 0;
-                rwY--;
-                if(rwY < 0){
-                    renderComplete = true;
-                    std::cout << "Render Complete" << std::endl;
-                    glfwSwapInterval(1);
+        d.Update();
 
-                }
-            }
-                rw.Reset(rwX * rwWidth, rwY * rwHeight);
-        }
+        //pxe.setBuffer(pixbuf);
+        //rw.DrawOutline();
+
+
+//        if(rw.IsFinished()){
+//            if(rwX < rwXJobs - 1){
+//                rwX++;
+//            }else{
+//                rwX = 0;
+//                rwY--;
+//                if(rwY < 0){
+//                    renderComplete = true;
+//                    std::cout << "Render Complete" << std::endl;
+//                    glfwSwapInterval(1);
+//
+//                }
+//            }
+//            rw.Reset(rwX * rwWidth, rwY * rwHeight);
+//            std::cout << "Worker complete" << std::endl;
+//
+//            if(!renderComplete){
+//                if(!t.joinable())
+//                t = std::thread(&RenderWorker::Work, &rw);
+//            }
+//        }
     }
 
     delete[] imgBuf;
@@ -222,17 +297,13 @@ int main(void)
 
 void SetProgram(){
     RenderWorker::Program = [](int x, int y) -> Px{
-        // int centerX = WIDTH / 2;
-        // int centerY = HEIGHT / 2;
-        // float diffX = centerX - x;
-        // float diffY = centerY - y;
-        // float dist = sqrt((diffX * diffX) + (diffY * diffY));
-        // Px col = dist < 30 ? Px{255,dist * 8,dist * 4} : Px{0,y,x};
-        // return col;
-
-        float r = double(x) / (WIDTH);
-        float g = double(y) / (HEIGHT);
-        float b = 0.25f;
-        return Px{(unsigned char)(r * 256), (unsigned char)(g * 256), (unsigned char)(b * 256)};
+        int centerX = WIDTH / 2;
+        int centerY = HEIGHT / 2;
+        float diffX = centerX - x;
+        float diffY = centerY - y;
+        float dist = sqrt((diffX * diffX) + (diffY * diffY));
+//        Px col = dist < 30 ? Px{255,static_cast<unsigned char>(dist * 8),static_cast<unsigned char>(dist * 4)} : Px{0,static_cast<unsigned char>(y),static_cast<unsigned char>(x)};
+//        return col;
+         return dist < 30 ? Px{255,static_cast<unsigned char>(dist * 8),static_cast<unsigned char>(dist * 4)} : Px{static_cast<unsigned char>(rand()%256),static_cast<unsigned char>(rand()%256),static_cast<unsigned char>(rand()%256)};
     };
 }
