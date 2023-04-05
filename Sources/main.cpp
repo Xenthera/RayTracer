@@ -8,9 +8,11 @@
 #include <complex>
 #include <complex.h>
 #include <vector>
-#define SIZE 512
+#define SIZE 1024
 #define WIDTH SIZE
 #define HEIGHT SIZE
+
+#define WORKER_SIZE 128
 
 #define ABS(n) ((n) > 0 ? (n) : -(n))
 
@@ -170,16 +172,20 @@ public:
         }
 
         for (int i = 0; i < _numWorkers; ++i) {
-            int idx = rand() % _tileQueue.size();
-            Tile t = _tileQueue.at(idx);
-            _tileQueue.erase(_tileQueue.begin() + idx);
-            //std::cout << "Dispatching at: " << t.x << ", " << t.y << std::endl;
-            _workers[i].Init(pxe, t.x * _renderWorkerSize, t.y * _renderWorkerSize, _renderWorkerSize, _renderWorkerSize);
-            _threads[i] = std::thread(&RenderWorker::Work, &_workers[i]);
+            if(!_tileQueue.empty()) {
+                int idx = rand() % _tileQueue.size();
+                Tile t = _tileQueue.at(idx);
+                _tileQueue.erase(_tileQueue.begin() + idx);
+                //std::cout << "Dispatching at: " << t.x << ", " << t.y << std::endl;
+                _workers[i].Init(pxe, t.x * _renderWorkerSize, t.y * _renderWorkerSize, _renderWorkerSize,
+                                 _renderWorkerSize);
+                _threads[i] = std::thread(&RenderWorker::Work, &_workers[i]);
+            }
         }
 
         for (int i = 0; i < _numWorkers; ++i) {
-            _threads[i].detach();
+            if(_threads[i].joinable())
+                _threads[i].detach();
         }
     }
     //poll each thread's worker, if it's done reschedule a new worker
@@ -191,7 +197,7 @@ public:
                     int idx = rand() % _tileQueue.size();
                     Tile t = _tileQueue.at(idx);
                     _tileQueue.erase(_tileQueue.begin() + idx);
-                    std::cout << "Dispatching at: " << t.x << ", " << t.y << std::endl;
+                    //std::cout << "Dispatching at: " << t.x << ", " << t.y << std::endl;
                     _workers[i].Reset( t.x * _renderWorkerSize, t.y * _renderWorkerSize);
                     _threads[i] = std::thread(&RenderWorker::Work, &_workers[i]);
                     _threads[i].detach();
@@ -319,7 +325,9 @@ int main(void)
 
     PXE pxe;
 
-    Dispatcher d{&pxe, 32};
+    int size = std::min(WORKER_SIZE, SIZE);
+
+    Dispatcher d{&pxe, size};
 
 
 
@@ -350,14 +358,16 @@ class ray {
 public:
     ray() {}
     ray(const point3& origin, const vec3& direction)
-            : orig(origin), dir(direction)
-    {}
+    {
+        orig = origin;
+        dir = direction;
+    }
 
     point3 origin() const  { return orig; }
     vec3 direction() const { return dir; }
 
     point3 at(double t) const {
-        return orig + t*dir;
+        return orig + t * dir;
     }
 
 public:
@@ -406,6 +416,7 @@ void SetProgram(){
     auto lower_left_corner = origin - horizontal/2 - vertical/2 - vec3(0, 0, focal_length);
 
     RenderWorker::Program = [origin, lower_left_corner, horizontal, vertical](int x, int y) -> Px{
+
         auto u = double(x) / (WIDTH-1);
         auto v = double(y) / (HEIGHT-1);
         ray r(origin, lower_left_corner + u*horizontal + v*vertical - origin);
